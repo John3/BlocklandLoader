@@ -5,7 +5,7 @@
 #include <string>
 
 #include "detours/detours.h"
-#include "include/BlocklandLoader.h"
+#include "api/BlocklandLoader.hpp"
 
 using MologieDetours::Detour;
 
@@ -48,12 +48,6 @@ typedef bool(*BoolCallback)(void *obj, int argc, const char* argv[]);
 
 void *StringTable;
 
-Sim__init_t Sim__init;
-Con__printf_t Con__printf;
-
-typedef void *(*LookupNamespace_t)(const char *ns);
-LookupNamespace_t LookupNamespace;
-
 typedef const char *(__thiscall *StringTableInsert_t)(void *this_, const char *str, const bool caseSensitive);
 StringTableInsert_t StringTableInsert;
 
@@ -62,8 +56,12 @@ AddBoolCommand_t AddBoolCommand;
 
 void ConsoleFunction(const char* nameSpace, const char* name, BoolCallback callBack, const char* usage, int minArgs, int maxArgs)
 {
-	AddBoolCommand(LookupNamespace(nameSpace), StringTableInsert(StringTable, name, false), callBack, usage, minArgs, maxArgs);
+	AddBoolCommand(Con::lookupNamespace(nameSpace), StringTableInsert(StringTable, name, false), callBack, usage, minArgs, maxArgs);
 }
+
+typedef void(*LoaderScanProc_t)(sigFind_t sigFindPtr);
+typedef void(*LoaderSymbolProc_t)(LoaderSymbolId symbol, void *pointer);
+typedef void(*LoaderVoidProc_t)();
 
 bool doDetachModule(string name)
 {
@@ -72,7 +70,7 @@ bool doDetachModule(string name)
 	if (module == NULL)
 		return false;
 
-	Con__printf("Detaching module '%s'", name.c_str());
+	Con::printf("Detaching module '%s'", name.c_str());
 
 	LoaderVoidProc_t detachProc = (LoaderVoidProc_t)GetProcAddress(module, "LoaderDetach");
 	if (detachProc != NULL)
@@ -91,7 +89,7 @@ bool doDetachModule(string name)
 		FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
 		NULL, dw, MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), (LPSTR)&lpMsgBuf, 0, NULL);
 
-	Con__printf("   \x03" "Failed to detach: %s", lpMsgBuf);
+	Con::printf("   \x03" "Failed to detach: %s", lpMsgBuf);
 	LocalFree(lpMsgBuf);
 
 	return false;
@@ -101,7 +99,7 @@ HMODULE doAttachModule(string name)
 {
 	doDetachModule(name);
 
-	Con__printf("Attaching module '%s'", name.c_str());
+	Con::printf("Attaching module '%s'", name.c_str());
 
 	char filename[MAX_PATH];
 	strcpy_s(filename, moduleDir);
@@ -118,7 +116,7 @@ HMODULE doAttachModule(string name)
 			FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
 			NULL, dw, MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), (LPSTR)&lpMsgBuf, 0, NULL);
 
-		Con__printf("   \x03" "Failed to attach: %s", lpMsgBuf);
+		Con::printf("   \x03" "Failed to attach: %s", lpMsgBuf);
 		LocalFree(lpMsgBuf);
 	}
 	else
@@ -128,8 +126,8 @@ HMODULE doAttachModule(string name)
 		LoaderSymbolProc_t symbolProc = (LoaderSymbolProc_t)GetProcAddress(module, "LoaderSymbol");
 		if (symbolProc != NULL)
 		{
-			symbolProc(SYM_CON_PRINTF, Con__printf);
-			symbolProc(SYM_SIM_INIT, Sim__init);
+			symbolProc(SYM_CON_PRINTF, Con::printf);
+			symbolProc(SYM_SIM_INIT, Sim::init);
 		}
 
 		LoaderScanProc_t scanProc = (LoaderScanProc_t)GetProcAddress(module, "LoaderScan");
@@ -154,18 +152,18 @@ bool tsDetachModule(void *obj, int argc, const char *argv[])
 	return doDetachModule(argv[1]);
 }
 
-Detour<Sim__init_t> *detour_Sim__init;
+Detour<Sim::init_t> *detour_Sim__init;
 
 void hook_Sim__init(void)
 {
-	Con__printf = (Con__printf_t)sigFind("\x8B\x4C\x24\x04\x8D\x44\x24\x08\x50\x6A\x00\x6A\x00\xE8\x00\x00\x00\x00\x83\xC4\x0C\xC3", "xxxxxxxxxxxxxx????xxxx");
+	Con::printf = (Con::printf_t)sigFind("\x8B\x4C\x24\x04\x8D\x44\x24\x08\x50\x6A\x00\x6A\x00\xE8\x00\x00\x00\x00\x83\xC4\x0C\xC3", "xxxxxxxxxxxxxx????xxxx");
 
-	if (Con__printf == NULL)
-		Con__printf = (Con__printf_t)printf; // This is a bad idea... probably
+	if (Con::printf == NULL)
+		Con::printf = (Con::printf_t)printf; // This is a bad idea... probably
 
-	LookupNamespace = (LookupNamespace_t)sigFind("\x8B\x44\x24\x04\x85\xC0\x75\x05", "xxxxxxxx");
+	Con::lookupNamespace = (Con::lookupNamespace_t)sigFind("\x8B\x44\x24\x04\x85\xC0\x75\x05", "xxxxxxxx");
 	StringTableInsert = (StringTableInsert_t)sigFind("\x53\x8B\x5C\x24\x08\x55\x56\x57\x53", "xxxxxxxxx");
-	StringTable = (void *)(*(unsigned int *)(*(unsigned int *)((unsigned int)LookupNamespace + 15)));
+	StringTable = (void *)(*(unsigned int *)(*(unsigned int *)((unsigned int)Con::lookupNamespace + 15)));
 
 	AddBoolCommand = (AddBoolCommand_t)sigFind(
 		"\x8B\x44\x24\x04\x56\x50\xE8\x00\x00\x00\x00\x8B\xF0\xA1\x00\x00\x00\x00\x40\xB9\x00\x00\x00\x00\xA3"
@@ -198,11 +196,11 @@ void hook_Sim__init(void)
 
 	if (!foundAny)
 	{
-		Con__printf("BlocklandLoader found no DLLs in the 'modules' directory");
-		Con__printf("--------------------------------------------------------");
+		Con::printf("BlocklandLoader found no DLLs in the 'modules' directory");
+		Con::printf("--------------------------------------------------------");
 	}
 
-	Con__printf("");
+	Con::printf("");
 
 	return detour_Sim__init->GetOriginalFunction()();
 }
@@ -217,10 +215,10 @@ bool __stdcall DllMain(void *, unsigned int reason, void *)
 		imageBase = (unsigned long)info.lpBaseOfDll;
 		imageSize = info.SizeOfImage;
 
-		Sim__init = (Sim__init_t)sigFind("\x56\x33\xF6\x57\x89\x35", "xxxxxx");
+		Sim::init = (Sim::init_t)sigFind("\x56\x33\xF6\x57\x89\x35", "xxxxxx");
 
-		if (Sim__init)
-			detour_Sim__init = new Detour<Sim__init_t>(Sim__init, hook_Sim__init);
+		if (Sim::init)
+			detour_Sim__init = new Detour<Sim::init_t>(Sim::init, hook_Sim__init);
 		else
 			return false;
 	}

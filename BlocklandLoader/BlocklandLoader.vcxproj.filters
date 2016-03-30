@@ -21,9 +21,15 @@
     <ClCompile Include="detours\hde.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="api\BlocklandLoader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\BlocklandLoader.h">
+    <ClInclude Include="api\BlocklandLoader.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

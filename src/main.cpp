@@ -1,6 +1,6 @@
-#include <Windows.h>
-#include <Psapi.h>
-#include <PathCch.h>
+#include <windows.h>
+#include <psapi.h>
+#include <shlwapi.h>
 #include <tchar.h>
 
 #include <map>
@@ -12,14 +12,13 @@ using MologieDetours::Detour;
 
 using std::map;
 using std::string;
-using std::wstring;
 
 static unsigned long imageBase;
 static unsigned long imageSize;
 
-map<wstring, HMODULE> moduleTable;
+map<string, HMODULE> moduleTable;
 
-WCHAR moduleDir[MAX_PATH];
+char moduleDir[MAX_PATH];
 
 bool sigTest(const char *data, const char *pattern, const char *mask)
 {
@@ -29,7 +28,7 @@ bool sigTest(const char *data, const char *pattern, const char *mask)
 			return false;
 	}
 
-	return *mask == NULL;
+	return *mask == 0;
 }
 
 void *sigFind(const char *pattern, const char *mask)
@@ -69,7 +68,7 @@ void ConsoleFunction(const char* nameSpace, const char* name, BoolCallback callB
 	AddBoolCommand(LookupNamespace(nameSpace), StringTableInsert(StringTable, name, false), callBack, usage, minArgs, maxArgs);
 }
 
-void printError(char *format)
+void printError(const char *format)
 {
 	DWORD dw = GetLastError();
 	LPVOID lpMsgBuf;
@@ -80,20 +79,13 @@ void printError(char *format)
 	LocalFree(lpMsgBuf);
 }
 
-bool doDetachModule(wstring name)
+bool doDetachModule(string name)
 {
 	HMODULE module = moduleTable[name];
 	if (module == NULL)
 		return false;
 
-	char convert[MAX_PATH];
-	if (WideCharToMultiByte(CP_ACP, 0, name.c_str(), -1, convert, MAX_PATH, "?", NULL) == 0)
-	{
-		Con__printf("Detaching module (failed to convert string)");
-		printError("\x3%s");
-	}
-	else
-		Con__printf("Detaching module '%s'", convert);
+	Con__printf("Detaching module '%s'", name.c_str());
 
 	if (FreeLibrary(module))
 	{
@@ -105,23 +97,16 @@ bool doDetachModule(wstring name)
 	return false;
 }
 
-HMODULE doAttachModule(wstring name)
+HMODULE doAttachModule(string name)
 {
 	doDetachModule(name);
-	char convert[MAX_PATH];
-	if (WideCharToMultiByte(CP_ACP, 0, name.c_str(), -1, convert, MAX_PATH, "?", NULL) == 0)
-	{
-		Con__printf("Attaching module (failed to convert string)");
-		printError("\x3%s");
-	}
-	else
-		Con__printf("Attaching module '%s'", convert);
+	Con__printf("Attaching module '%s'", name.c_str());
 
-	WCHAR filename[MAX_PATH];
-	wcscpy_s(filename, moduleDir);
-	PathCchAppend(filename, MAX_PATH, name.c_str());
+	char filename[MAX_PATH];
+	strcpy_s(filename, moduleDir);
+	PathAppend(filename, name.c_str());
 
-	HMODULE module = LoadLibraryW(filename);
+	HMODULE module = LoadLibraryA(filename);
 	if (module == NULL)
 		printError("   \x03" "Failed to attach: %s");
 	else
@@ -132,24 +117,12 @@ HMODULE doAttachModule(wstring name)
 
 bool tsAttachModule(void *obj, int argc, const char *argv[])
 {
-	WCHAR convert[MAX_PATH];
-	if (MultiByteToWideChar(CP_ACP, 0, argv[1], -1, convert, MAX_PATH) == 0)
-	{
-		printError("\x03" "Failed to convert TS string to UTF-16: %s");
-		return false;
-	}
-	return doAttachModule(convert) != NULL;
+	return doAttachModule(argv[1]) != NULL;
 }
 
 bool tsDetachModule(void *obj, int argc, const char *argv[])
 {
-	WCHAR convert[MAX_PATH];
-	if (MultiByteToWideChar(CP_ACP, 0, argv[1], -1, convert, MAX_PATH) == 0)
-	{
-		printError("\x03" "Failed to convert TS string to UTF-16: %s");
-		return false;
-	}
-	return doDetachModule(convert);
+	return doDetachModule(argv[1]);
 }
 
 Detour<Sim__init_t> *detour_Sim__init;
@@ -163,9 +136,9 @@ void hook_Sim__init(void)
 
 	Con__printf("BlocklandLoader Init:");
 	
-	if (GetModuleFileNameW(NULL, moduleDir, MAX_PATH) == 0
-	 || PathCchRemoveFileSpec(moduleDir, MAX_PATH) != S_OK
-	 || PathCchAppend(moduleDir, MAX_PATH, L"modules") != S_OK)
+	if (GetModuleFileNameA(NULL, moduleDir, MAX_PATH) == 0
+	 || PathRemoveFileSpec(moduleDir) == -1 // never returned, this shouldn't be in this if()
+	 || !PathAppend(moduleDir, "modules"))
 	{
 		printError("   \x03" "Failed to determine directory: %s");
 		return detour_Sim__init->GetOriginalFunction()();
@@ -188,22 +161,15 @@ void hook_Sim__init(void)
 
 	bool foundAny = false;
 
-	WCHAR moduleSearch[MAX_PATH];
-	wcscpy_s(moduleSearch, moduleDir);
-	PathCchAppend(moduleSearch, MAX_PATH, L"*.dll");
+	char moduleSearch[MAX_PATH];
+	strcpy_s(moduleSearch, moduleDir);
+	PathAppend(moduleSearch, "*.dll");
 
-	char convert[MAX_PATH];
-	if (WideCharToMultiByte(CP_ACP, 0, moduleSearch, -1, convert, MAX_PATH, "?", NULL) == 0)
-	{
-		Con__printf("   Search path: (failed to convert string)");
-		printError("      \x3%s");
-	}
-	else
-		Con__printf("   Search path: %s", convert);
+	Con__printf("   Search path: %s", moduleSearch);
 	Con__printf("");
 
-	WIN32_FIND_DATAW ffd;
-	HANDLE hFind = FindFirstFileW(moduleSearch, &ffd);
+	WIN32_FIND_DATAA ffd;
+	HANDLE hFind = FindFirstFileA(moduleSearch, &ffd);
 
 	if (hFind != INVALID_HANDLE_VALUE) do
 	{
@@ -212,7 +178,7 @@ void hook_Sim__init(void)
 
 		foundAny = true;
 		doAttachModule(ffd.cFileName);
-	} while (FindNextFileW(hFind, &ffd) != 0);
+	} while (FindNextFileA(hFind, &ffd) != 0);
 
 	if (!foundAny)
 	{
@@ -230,7 +196,7 @@ bool __stdcall DllMain(void *, unsigned int reason, void *)
 	if (reason == DLL_PROCESS_ATTACH)
 	{
 		MODULEINFO info;
-		GetModuleInformation(GetCurrentProcess(), GetModuleHandle(NULL), &info, sizeof MODULEINFO);
+		GetModuleInformation(GetCurrentProcess(), GetModuleHandle(NULL), &info, sizeof (MODULEINFO));
 
 		imageBase = (unsigned long)info.lpBaseOfDll;
 		imageSize = info.SizeOfImage;
